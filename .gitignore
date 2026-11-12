@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+.pytest_cache/
+build/SafePlay/
+dist/
+*.pyc
+*.db
+
+/*.exe
+.env
+.env.*
+*.db-wal
+*.db-shm
+build/SafePlayOneFile/
