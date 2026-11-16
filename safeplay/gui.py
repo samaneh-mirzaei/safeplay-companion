@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
 )
 
 from .engine import SkipEngine
-from .models import CATEGORIES, Movie, Scene, identify_file, runtime_warning
+from .models import CATEGORIES, Movie, Scene, identify_media, runtime_warning
 from .mpv import MpvClient, MpvError, syncplay_pipes
 from .provider import DoesTheDogDie, ProviderError, fallback_providers
 from .storage import Store
@@ -160,14 +160,14 @@ class MpvWorker(QThread):
 class FetchWorker(QThread):
     done = Signal(object, object)
 
-    def __init__(self, key, title, year):
+    def __init__(self, key, title, year, media_type):
         super().__init__()
-        self.key, self.title, self.year = key, title, year
+        self.key, self.title, self.year, self.media_type = key, title, year, media_type
 
     def run(self):
         try:
             provider = DoesTheDogDie(self.key)
-            matches = provider.find(self.title, self.year)
+            matches = provider.find(self.title, self.year, self.media_type)
             self.done.emit(matches, None)
         except Exception as exc:
             self.done.emit(None, str(exc))
@@ -176,13 +176,13 @@ class FetchWorker(QThread):
 class GuideWorker(QThread):
     done = Signal(object, object)
 
-    def __init__(self, key, item):
+    def __init__(self, key, item, season=None, episode=None):
         super().__init__()
-        self.key, self.item = key, item
+        self.key, self.item, self.season, self.episode = key, item, season, episode
 
     def run(self):
         try:
-            self.done.emit(DoesTheDogDie(self.key).guide(self.item), None)
+            self.done.emit(DoesTheDogDie(self.key).guide(self.item, self.season, self.episode), None)
         except Exception as exc:
             self.done.emit(None, str(exc))
 
@@ -293,15 +293,27 @@ class MainWindow(QMainWindow):
             label.setTextFormat(Qt.PlainText)
             layout.addWidget(label)
         row = QHBoxLayout()
-        self.title = QLineEdit(); self.title.setPlaceholderText("Movie title")
+        self.title = QLineEdit(); self.title.setPlaceholderText("Movie or series title")
         self.year = QSpinBox(); self.year.setRange(0, 2100); self.year.setSpecialValueText("Year unknown")
         self.search = QPushButton("Find guide")
         self.search.clicked.connect(self._search)
         row.addWidget(self.title); row.addWidget(self.year); row.addWidget(self.search)
         layout.addLayout(row)
+        episode_row = QHBoxLayout()
+        self.media_type = QComboBox()
+        self.media_type.addItem("Movie", "movie")
+        self.media_type.addItem("TV show", "tv show")
+        self.season = QSpinBox(); self.season.setRange(1, 100); self.season.setPrefix("Season ")
+        self.episode = QSpinBox(); self.episode.setRange(1, 1000); self.episode.setPrefix("Episode ")
+        self.media_type.currentIndexChanged.connect(self._kind_changed)
+        self.season.valueChanged.connect(self._selection_changed)
+        self.episode.valueChanged.connect(self._selection_changed)
+        episode_row.addWidget(self.media_type); episode_row.addWidget(self.season); episode_row.addWidget(self.episode)
+        layout.addLayout(episode_row)
         self.confirm = QPushButton("Review and confirm movie edition")
         self.confirm.clicked.connect(self._confirm_edition)
         layout.addWidget(self.confirm)
+        self._kind_changed()
         self.all_filters = QCheckBox("Enable all content filters")
         self.all_filters.stateChanged.connect(self._toggle_all)
         layout.addWidget(self.all_filters)
@@ -383,6 +395,31 @@ class MainWindow(QMainWindow):
         self.status_label.setText("mpv: " + status)
         self._log("connection", status)
 
+    def _kind_changed(self):
+        is_series = self.media_type.currentData() == "tv show"
+        self.season.setEnabled(is_series)
+        self.episode.setEnabled(is_series)
+        self.confirm.setText("Review and confirm episode edition" if is_series
+                             else "Review and confirm movie edition")
+        self._selection_changed()
+
+    def _selection_changed(self):
+        if self.movie is None:
+            return
+        self.movie = None
+        self.confirmed = False
+        self.suspended = False
+        self.worker.configure(scenes=[], duration=self.duration, confirmed=False)
+        self.guide_label.setText("Guide: selection changed; click Find guide")
+        self._render_scenes()
+        self._update_skip_label()
+
+    def _search_context(self):
+        return (self.media_path, self.title.text().strip(), self.year.value() or None,
+                self.media_type.currentData(),
+                self.season.value() if self.media_type.currentData() == "tv show" else None,
+                self.episode.value() if self.media_type.currentData() == "tv show" else None)
+
     def _warning(self, message):
         if not self.suspended:
             self.suspended = True
@@ -406,9 +443,13 @@ class MainWindow(QMainWindow):
                 self._render_scenes()
                 self._update_skip_label()
                 return
-            title, year = identify_file(path)
+            title, year, season, episode = identify_media(path)
             self.title.setText(title)
             self.year.setValue(year or 0)
+            self.media_type.setCurrentIndex(1 if season is not None else 0)
+            if season is not None:
+                self.season.setValue(season)
+                self.episode.setValue(episode)
             self.movie = None; self.confirmed = False; self.suspended = False
             self.worker.configure(scenes=[], duration=self.duration, confirmed=False)
             self.movie_label.setText(f"Movie: {title} ({year or 'year unknown'})")
@@ -428,13 +469,14 @@ class MainWindow(QMainWindow):
         if not title:
             QMessageBox.warning(self, "Movie title", "Enter a movie title first."); return
         self.guide_label.setText("Guide: searching…")
-        self.fetcher = FetchWorker(self.api_key.text(), title, self.year.value() or None)
-        self.fetch_context = (self.media_path, title, self.year.value() or None)
+        self.fetcher = FetchWorker(self.api_key.text(), title, self.year.value() or None,
+                                   self.media_type.currentData())
+        self.fetch_context = self._search_context()
         self.fetcher.done.connect(self._found)
         self.fetcher.start()
 
     def _found(self, matches, error):
-        if self.fetch_context != (self.media_path, self.title.text().strip(), self.year.value() or None):
+        if self.fetch_context != self._search_context():
             if self.api_key.text() and self.media_path:
                 QTimer.singleShot(100, self._search)
             return
@@ -442,8 +484,8 @@ class MainWindow(QMainWindow):
             self.guide_label.setText("Guide: unavailable")
             self._log("error", error); return
         if not matches:
-            self.guide_label.setText("Guide: no movie match")
-            self._log("guide", "No movie match; correct title/year manually")
+            self.guide_label.setText("Guide: no matching title")
+            self._log("guide", "No matching movie or TV show; check type, title and year")
             return
         wanted = self.title.text().strip().casefold()
         year = self.year.value() or None
@@ -451,7 +493,7 @@ class MainWindow(QMainWindow):
         if len(exact) == 1:
             item = exact[0]
         else:
-            dialog = QDialog(self); dialog.setWindowTitle("Choose the correct movie")
+            dialog = QDialog(self); dialog.setWindowTitle("Choose the correct title")
             layout = QVBoxLayout(dialog); listing = QListWidget()
             for m in matches:
                 listing.addItem(f"{m.get('name')} ({m.get('releaseYear', '?')}) — ID {m.get('id')}")
@@ -462,17 +504,21 @@ class MainWindow(QMainWindow):
             if dialog.exec() != QDialog.Accepted or listing.currentRow() < 0:
                 self.guide_label.setText("Guide: selection required"); return
             item = matches[listing.currentRow()]
-        cached = self.store.load_guide(str(item["id"]))
+        is_series = self.media_type.currentData() == "tv show"
+        season = self.season.value() if is_series else None
+        episode = self.episode.value() if is_series else None
+        guide_id = f"{item['id']}:S{season}E{episode}" if is_series else str(item["id"])
+        cached = self.store.load_guide(guide_id)
         if cached:
             self._guide_ready(cached, None, from_cache=True); return
         self.guide_label.setText("Guide: downloading…")
-        self.guide_worker = GuideWorker(self.api_key.text(), item)
-        self.guide_context = self.media_path
+        self.guide_worker = GuideWorker(self.api_key.text(), item, season, episode)
+        self.guide_context = self._search_context()
         self.guide_worker.done.connect(self._guide_ready)
         self.guide_worker.start()
 
     def _guide_ready(self, movie, error, from_cache=False):
-        if not from_cache and self.guide_context != self.media_path:
+        if not from_cache and self.guide_context != self._search_context():
             if self.api_key.text() and self.media_path:
                 QTimer.singleShot(100, self._search)
             return
@@ -494,7 +540,7 @@ class MainWindow(QMainWindow):
         self._log("guide", f"Loaded {movie.title}; {len(movie.scenes)} scenes. " + " ".join(movie.warnings))
         self._render_scenes()
         self._update_skip_label()
-        providers = fallback_providers(self.movie.scenes)
+        providers = fallback_providers(self.movie.scenes) if self.movie.source == "doesthedogdie" else []
         if providers:
             self.scene_fetch_context = (self.media_path, self.movie.external_id)
             self.scene_fetcher = SceneSourceWorker(self.movie.title, self.movie.year, providers)

@@ -64,6 +64,17 @@ def identify_file(path: str) -> tuple[str, int | None]:
     return re.sub(r"\s+", " ", name).strip(" -[]()"), year
 
 
+def identify_media(path: str) -> tuple[str, int | None, int | None, int | None]:
+    stem = Path(path).stem
+    episode = re.search(r"(?:^|[. _-])S(\d{1,2})[. _-]*E(\d{1,3})(?=$|[. _-])",
+                        stem, flags=re.I)
+    if episode:
+        title, year = identify_file(stem[:episode.start()] + ".mkv")
+        return title, year, int(episode.group(1)), int(episode.group(2))
+    title, year = identify_file(path)
+    return title, year, None, None
+
+
 def runtime_warning(player: float | None, guide: float | None) -> str | None:
     if not player or not guide:
         return "Guide runtime is unavailable; confirm this movie edition before skipping."

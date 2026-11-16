@@ -1,9 +1,10 @@
-from safeplay.models import Movie, Scene, identify_file, runtime_warning
+from safeplay.models import Movie, Scene, identify_file, identify_media, runtime_warning
 from safeplay.storage import Store
 
 
 def test_filename_and_runtime():
     assert identify_file("D:/Movie.Name.2020.1080p.mkv") == ("Movie Name", 2020)
+    assert identify_media("D:/Eşref.Rüya.S01E03.1080p.mkv") == ("Eşref Rüya", None, 1, 3)
     assert runtime_warning(7200, 7500)
 
 

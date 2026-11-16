@@ -25,6 +25,10 @@ Skipping starts **OFF**. A category checkbox alone does not start skipping. Ever
 
 ## What each screen does
 
+### TV series and episodes
+
+Choose **TV show** on Dashboard, enter the series title and year, then choose the **Season** and **Episode** numbers before clicking **Find guide**. A filename containing `S01E03` fills these controls automatically. SafePlay reads only DoesTheDogDie ratings tagged with that exact season and episode. Each episode has a separate cached guide and requires its own edition confirmation. Show-wide ratings without an episode number are not used for automatic skipping. CleanStream and CringeMDb are currently movie-only fallbacks; they are not applied to TV episodes. As with movies, an episode can skip only when its guide has usable timestamps.
+
 ### Dashboard
 
 - **mpv status** reports whether SafePlay can talk to mpv. `Disconnected` usually means mpv is closed or its IPC pipe is missing or different. `Connected` with **no media loaded** means mpv is open but has no movie.

@@ -44,11 +44,15 @@ def hms(r: dict, prefix: str) -> float | None:
 
 
 def normalize(item: dict, detail: dict, ratings: list[dict], topics: list[dict],
-              categories: list[dict]) -> Movie:
+              categories: list[dict], season: int | None = None,
+              episode: int | None = None) -> Movie:
     if not isinstance(item, dict) or not isinstance(detail, dict) or not isinstance(ratings, list):
         raise ProviderError("Unexpected API response schema")
-    if item.get("itemTypeName", "").casefold() != "movie":
-        raise ProviderError("Selected item is not a movie")
+    media_type = item.get("itemTypeName", "").casefold()
+    if media_type not in {"movie", "tv show"}:
+        raise ProviderError("Selected item must be a movie or TV show")
+    if media_type == "tv show" and (not season or not episode):
+        raise ProviderError("Choose a season and episode for this TV show")
     item_id = item.get("id")
     if not isinstance(item_id, int) or not isinstance(item.get("name"), str):
         raise ProviderError("Movie ID or title is missing")
@@ -61,6 +65,8 @@ def normalize(item: dict, detail: dict, ratings: list[dict], topics: list[dict],
         if not isinstance(r, dict) or r.get("yes") != 1 or r.get("itemId") != item_id:
             continue
         if not isinstance(r.get("id"), int):
+            continue
+        if media_type == "tv show" and (r.get("index1"), r.get("index2")) != (season, episode):
             continue
         topic = topic_map.get(r.get("topicId"), {})
         names = [cat_names.get(topic.get(k), "") for k in ("topicCategoryId", "altTopicCategoryId")]
@@ -84,8 +90,11 @@ def normalize(item: dict, detail: dict, ratings: list[dict], topics: list[dict],
         warnings.append("No mapped scene intervals were returned; review guide topics manually.")
     elif not any(s.reliability == "verified" for s in scenes):
         warnings.append("Community timestamps require manual review and editing before they can skip.")
-    return Movie(item["name"], item.get("releaseYear"), str(item_id), None,
-                 "doesthedogdie", scenes, warnings)
+    suffix = f" — S{season:02}E{episode:02}" if media_type == "tv show" else ""
+    guide_id = f"{item_id}:S{season}E{episode}" if suffix else str(item_id)
+    source = "doesthedogdie:tv" if suffix else "doesthedogdie"
+    return Movie(item["name"] + suffix, item.get("releaseYear"), guide_id, None,
+                 source, scenes, warnings)
 
 
 class DoesTheDogDie(GuideProvider):
@@ -117,15 +126,18 @@ class DoesTheDogDie(GuideProvider):
         except (requests.RequestException, ValueError) as exc:
             raise ProviderError(f"DoesTheDogDie request failed: {exc}") from exc
 
-    def find(self, title: str, year: int | None = None) -> list[dict]:
+    def find(self, title: str, year: int | None = None,
+             media_type: str = "movie") -> list[dict]:
         if not title or len(title) > 200:
             raise ProviderError("Enter a valid movie title")
         result = self._get("/items", {"name": title, **({"releaseYear": year} if year else {})})
         if not isinstance(result, list):
             raise ProviderError("Unexpected movie search response")
-        return [x for x in result if isinstance(x, dict) and x.get("itemTypeName", "").casefold() == "movie"]
+        return [x for x in result if isinstance(x, dict)
+                and x.get("itemTypeName", "").casefold() == media_type]
 
-    def guide(self, item: dict) -> Movie:
+    def guide(self, item: dict, season: int | None = None,
+              episode: int | None = None) -> Movie:
         item_id = item.get("id")
         if not isinstance(item_id, int) or item_id < 1:
             raise ProviderError("Invalid movie ID")
@@ -133,7 +145,7 @@ class DoesTheDogDie(GuideProvider):
         ratings = self._get(f"/items/{item_id}/ratings")
         topics = self._get("/topics")
         categories = self._get("/topiccategories")
-        return normalize(item, detail, ratings, topics, categories)
+        return normalize(item, detail, ratings, topics, categories, season, episode)
 
 
 class CleanStream:
