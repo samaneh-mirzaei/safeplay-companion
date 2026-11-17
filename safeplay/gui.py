@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import sqlite3
 from datetime import datetime
 import threading
@@ -20,11 +21,16 @@ from .theme import STYLE, AdaptiveColumns, CueArtwork, CinemaIllustration, ticke
 from .controls import IntegerInput as QSpinBox, DecimalInput as QDoubleSpinBox, ChoiceInput as QComboBox
 from .engine import SkipEngine
 from .secondary import STYLE as SECONDARY_STYLE, SETTINGS_STYLE, SceneLabels, empty_state, activity_html
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QIcon
 from .models import CATEGORIES, Movie, Scene, identify_media, runtime_warning
 from .mpv import MpvClient, MpvError, syncplay_pipes
 from .provider import DoesTheDogDie, ProviderError, fallback_providers
 from .storage import Store
+
+
+def application_icon():
+    root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
+    return QIcon(str(root / "assets" / "safeplay.ico"))
 
 
 def clock(seconds):
@@ -266,6 +272,7 @@ class MainWindow(QMainWindow):
         self.confirmed = False
         self.suspended = False
         self.setWindowTitle("SafePlay Companion")
+        self.setWindowIcon(application_icon())
         self.resize(1180, 800)
         self.setMinimumSize(560, 480)
         self.setStyleSheet(STYLE)
@@ -918,6 +925,7 @@ class MainWindow(QMainWindow):
 def launch():
     app = QApplication([])
     app.setStyle("Fusion")
+    app.setWindowIcon(application_icon())
     home = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "SafePlayCompanion"
     window = MainWindow(home / "safeplay.db")
     window.show_startup_window()

@@ -2,7 +2,8 @@
 from pathlib import Path
 
 root = Path(SPECPATH).parent
-a = Analysis([str(root / 'main.py')], pathex=[str(root)], binaries=[], datas=[],
+a = Analysis([str(root / 'main.py')], pathex=[str(root)], binaries=[],
+             datas=[(str(root / 'assets' / 'safeplay.ico'), 'assets')],
              hiddenimports=[], hookspath=[], hooksconfig={}, runtime_hooks=[], excludes=[],
              noarchive=False)
 a.binaries = [entry for entry in a.binaries

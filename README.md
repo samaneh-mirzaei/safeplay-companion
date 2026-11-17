@@ -106,7 +106,7 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe main.py
 ```
 
-Run `.\.venv\Scripts\python.exe -m pytest -q` for engine, storage, provider, GUI, and IPC tests. These tests use mocks or local fixtures; no API key, movie, or Syncplay server is required. On Windows, `build.ps1` checks Python 3.12+, installs `requirements.txt`, runs tests, and builds the one-file app. With the virtual environment active, run `./build.ps1`; otherwise run `.\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean build/SafePlayOneFile.spec`. The standalone output is `dist\SafePlayCompanion.exe`. The optional folder spec `build/SafePlay.spec` produces `dist\SafePlayCompanion\` and requires its `_internal` folder. The icon in `assets` is a placeholder. There is no version tag or published release in this checkout.
+Run `.\.venv\Scripts\python.exe -m pytest -q` for engine, storage, provider, GUI, and IPC tests. These tests use mocks or local fixtures; no API key, movie, or Syncplay server is required. On Windows, `build.ps1` checks Python 3.12+, installs `requirements.txt`, runs tests, and builds the one-file app. With the virtual environment active, run `./build.ps1`; otherwise run `.\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean build/SafePlayOneFile.spec`. The standalone output is `dist\SafePlayCompanion.exe`. The optional folder spec `build/SafePlay.spec` produces `dist\SafePlayCompanion\` and requires its `_internal` folder. The projector icon master is `assets/safeplay.svg`; run `.\.venv\Scripts\python.exe build/make_icon.py` to regenerate its multi-resolution `assets/safeplay.ico` before building after icon edits. There is no version tag or published release in this checkout.
 
 ## Limitations
 

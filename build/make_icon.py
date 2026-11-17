@@ -1,18 +1,43 @@
-"""Create a simple 32x32 placeholder ICO without external dependencies."""
+"""Render the SafePlay projector SVG into a multi-resolution Windows icon."""
 from pathlib import Path
 import struct
 
-size = 32
-pixels = bytearray()
-for y in range(size - 1, -1, -1):
-    for x in range(size):
-        play = 10 <= x <= 23 and abs(y - 16) <= (x - 9) * 0.65
-        b, g, r, a = (245, 230, 210, 255) if play else (180, 103, 42, 255)
-        pixels.extend((b, g, r, a))
-mask = bytes(4 * size)
-dib = struct.pack("<IiiHHIIiiII", 40, size, size * 2, 1, 32, 0, len(pixels), 0, 0, 0, 0)
-data = dib + pixels + mask
-directory = struct.pack("<HHH", 0, 1, 1) + struct.pack("<BBBBHHII", size, size, 0, 0, 1, 32, len(data), 22)
-target = Path(__file__).resolve().parent.parent / "assets" / "safeplay.ico"
-target.parent.mkdir(parents=True, exist_ok=True)
-target.write_bytes(directory + data)
+from PySide6.QtCore import QByteArray, QBuffer, QIODevice, QRectF, Qt
+from PySide6.QtGui import QImage, QPainter
+from PySide6.QtSvg import QSvgRenderer
+
+
+root = Path(__file__).resolve().parent.parent
+renderer = QSvgRenderer(str(root / "assets" / "safeplay.svg"))
+if not renderer.isValid():
+    raise RuntimeError("Cannot load the SafePlay SVG icon")
+
+images = []
+for size in (16, 24, 32, 48, 64, 128, 256):
+    image = QImage(size, size, QImage.Format_ARGB32)
+    image.fill(Qt.transparent)
+    painter = QPainter(image)
+    painter.setRenderHint(QPainter.Antialiasing)
+    renderer.render(painter, QRectF(0, 0, size, size))
+    painter.end()
+
+    data = QByteArray()
+    buffer = QBuffer(data)
+    buffer.open(QIODevice.WriteOnly)
+    if not image.save(buffer, "PNG"):
+        raise RuntimeError(f"Cannot render the {size}px icon")
+    images.append((size, bytes(data)))
+
+directory = struct.pack("<HHH", 0, 1, len(images))
+offset = 6 + 16 * len(images)
+entries = []
+for size, data in images:
+    entries.append(struct.pack(
+        "<BBBBHHII", size if size < 256 else 0, size if size < 256 else 0,
+        0, 0, 1, 32, len(data), offset,
+    ))
+    offset += len(data)
+
+(root / "assets" / "safeplay.ico").write_bytes(
+    directory + b"".join(entries) + b"".join(data for _, data in images)
+)
