@@ -1,10 +1,18 @@
 # SafePlay Companion
 
+The desktop interface uses a cue-sheet inspired Neo-Brutalist design: bold headings,
+square controls and hard shadows on a warm white (`#FAF9F6`) canvas. Mustard actions,
+cyan navigation, pink sections, and small dotted geometric illustrations provide accents.
+Dashboard features SVG cinema artwork and ticket-style panels; Dashboard and Settings fit without
+scrolling in the default 1180 × 800 desktop window. Both tabs
+stack their panels in smaller windows and scroll only when needed for access. The same four tabs
+and filtering workflow remain available. See [the design system](DESIGN.md).
+
 [راهنمای فارسی](README.fa) (open `README.fa` with Notepad if Windows asks which app to use)
 
-SafePlay Companion is a Windows desktop helper for mpv. It reads the current file and playback position through mpv JSON IPC, obtains parental guide data from DoesTheDogDie, then looks for timestamped intervals from CleanStream/VideoSkip and CringeMDb. It seeks past selected intervals after movie-edition confirmation. It never examines video or audio and does not alter Syncplay.
+SafePlay Companion is a Windows desktop helper for mpv. It reads the current file and playback position through mpv JSON IPC, obtains parental guide data from DoesTheDogDie, then looks for timestamped intervals from CleanStream/VideoSkip and CringeMDb. It seeks past selected intervals after edition confirmation. It never examines video or audio. When mpv is managed by Syncplay, a seek may affect or be corrected by the Syncplay room; see [Syncplay compatibility](#syncplay-compatibility).
 
-**Prebuilt Windows app:** Extract `SafePlay-Companion-Windows.zip` and run `SafePlayCompanion.exe`. The current build is a single file; keep it wherever you want. The older folder build under `dist\SafePlayCompanion\` works only when its `_internal` folder stays beside the EXE.
+**Windows download:** Check [GitHub Releases](https://github.com/samaneh-mirzaei/safeplay-companion/releases) for a published build. **There is currently no GitHub release or downloadable ZIP.** The local build script produces a single `dist\SafePlayCompanion.exe`, which runs without a Python installation. Do not look for `SafePlay-Companion-Windows.zip` unless a future release actually provides it.
 
 ## First use: follow these steps in order
 
@@ -14,7 +22,7 @@ SafePlay Companion is a Windows desktop helper for mpv. It reads the current fil
    input-ipc-server=\\.\pipe\safeplay-mpv
    ```
 
-   If your mpv installation has a `portable_config` folder beside `mpv.exe`, edit `portable_config\mpv.conf` instead. In SafePlay Settings, keep **mpv IPC pipe** at the matching default `\\.\pipe\safeplay-mpv` and click **Save settings**. You can also launch mpv with `--input-ipc-server=\\.\pipe\safeplay-mpv` instead of editing a file. Restart the actual mpv process after adding the option. **Syncplay can override the pipe from mpv.conf**; SafePlay now looks for a reachable `syncplay-mpv-*` pipe automatically. If the dashboard reports access denied, run SafePlay and Syncplay at the same Windows privilege level, or configure a shared pipe in Syncplay's Player Arguments and enter that exact pipe in SafePlay Settings. Only one mpv process can use a given pipe name. See the [mpv manual](https://mpv.io/manual/stable/) and [Syncplay IPC discussion](https://github.com/Syncplay/syncplay/issues/529).
+   If your mpv installation has a `portable_config` folder beside `mpv.exe`, edit `portable_config\mpv.conf` instead. In SafePlay Settings, keep **mpv IPC pipe** at the matching default `\\.\pipe\safeplay-mpv` and click **Save settings**. You can also launch mpv with `--input-ipc-server=\\.\pipe\safeplay-mpv` instead of editing a file. Restart the actual mpv process after adding the option. **Syncplay can override the pipe from mpv.conf**; SafePlay looks for a reachable `syncplay-mpv-*` pipe automatically when the configured pipe is unavailable. If several reachable Syncplay pipes exist, SafePlay asks you to choose the correct pipe in Settings. If the dashboard reports access denied, run SafePlay and Syncplay at the same Windows privilege level, or configure a shared pipe in Syncplay's Player Arguments and enter that exact pipe in SafePlay Settings. Only one mpv process can use a given pipe name. See the [mpv manual](https://mpv.io/manual/stable/) and [Syncplay IPC discussion](https://github.com/Syncplay/syncplay/issues/529).
 2. **Get an API key.** Create a DoesTheDogDie API key on its [API page](https://www.doesthedogdie.com/api/3.0). In SafePlay, open **Settings**, paste it into **DoesTheDogDie API key (session only)**, and click **Save settings**. If the movie is already playing, go to **Dashboard** and click **Find guide**. The key is forgotten when you close SafePlay. To provide it automatically on later launches, set the Windows environment variable `SAFEPLAY_DDD_API_KEY` before starting the app.
 3. **Play a movie in mpv.** You may start it directly or through Syncplay. Open SafePlay. **Dashboard** should say `Connected to mpv` and show the movie and playback time. SafePlay guesses the title and year from the filename; correct either field and click **Find guide** if the guess is wrong. If several matches appear, select the exact movie and year.
 4. **Inspect the guide.** Open **Scenes**. If the main guide has missing times, the app checks CleanStream/VideoSkip and CringeMDb for additional start/end intervals. Wait for the scene count to update. Choose individual rows with **Skip this scene**. `Missing` means that original row has no usable interval; a matching fallback interval appears as a separate row labeled `provided`. It can skip after edition confirmation. It may be unverified or offset for another cut, so check the runtime and scene positions before enabling it. Manual editing remains available when no source covers the movie.
@@ -27,7 +35,7 @@ Skipping starts **OFF**. A category checkbox alone does not start skipping. Ever
 
 ### TV series and episodes
 
-Choose **TV show** on Dashboard, enter the series title and year, then choose the **Season** and **Episode** numbers before clicking **Find guide**. A filename containing `S01E03` fills these controls automatically. SafePlay reads only DoesTheDogDie ratings tagged with that exact season and episode. Each episode has a separate cached guide and requires its own edition confirmation. Show-wide ratings without an episode number are not used for automatic skipping. CleanStream and CringeMDb are currently movie-only fallbacks; they are not applied to TV episodes. As with movies, an episode can skip only when its guide has usable timestamps.
+Choose **TV show** on Dashboard, enter the series title and year, then choose the **Season** and **Episode** numbers before clicking **Find guide**. A filename containing `S01E03` fills these controls automatically. SafePlay reads only DoesTheDogDie ratings tagged with that exact season and episode. Each episode has a separate cached guide and requires its own edition confirmation. Show-wide ratings without an episode number are not used for automatic skipping. CleanStream and CringeMDb provide movie catalogs, not episode-aware fallback data; do not rely on them for TV timestamps. As with movies, an episode can skip only when its guide has usable timestamps.
 
 ### Dashboard
 
@@ -48,16 +56,16 @@ Choose **TV show** on Dashboard, enter the series title and year, then choose th
 
 - **mpv IPC pipe:** Must equal the pipe configured in the mpv process, normally `\\.\pipe\safeplay-mpv`.
 - **DoesTheDogDie API key (session only):** Credential for guide searches. It is not saved in SQLite. After entering a key while a movie is already loaded, click **Find guide** on Dashboard.
-- **Connect automatically:** When checked, SafePlay repeatedly tries to connect to mpv. Turning it off disconnects; check it and save again to reconnect. There is no separate Connect button.
+- **Connect to mpv automatically:** When checked, SafePlay repeatedly tries to connect to mpv. Turning it off stops connection attempts; check it and save again to reconnect. There is no separate Connect button.
 - **Automatic skipping:** Master on/off control. Requires a loaded guide, edition confirmation, selected categories, and eligible scene intervals. Click **Save settings** after changing it.
 - **Safety margin (seconds):** From `0` to `5`; SafePlay may trigger slightly before the scene start and resumes slightly after its end. Default is `0.5` second.
 - **Language:** The current app interface supports English only. The [Persian guide](README.fa) translates these instructions, not the buttons.
-- **Startup window:** `Normal window` or `Minimized` controls how the app window opens. It does **not** make SafePlay start with Windows.
-- **Save settings:** Applies and stores the settings above except the API key, which stays in memory only.
+- **SafePlay window mode:** Choosing `Normal window` or `Minimized` immediately changes SafePlay's window and saves the choice for future launches. No separate Save click is needed for this option. This controls SafePlay, not mpv, and does **not** make SafePlay start with Windows.
+- **Save settings:** Applies and stores the pipe, automatic connection, automatic skipping, safety margin, and window mode. The API key stays in memory only; the window mode also saves immediately when selected. Language currently has only English.
 
 ### Activity
 
-Shows connection changes, movie detection, guide retrieval, edited scenes, automatic skips, and errors. **Refresh log** reloads the saved entries. Read this tab when a guide is unavailable or a skip does not happen.
+Shows connection changes, movie detection, guide retrieval, edited scenes, automatic skips, and errors. **Refresh log** reloads the newest 200 saved events, updates the displayed count and timestamp, and preserves history. The count describes the displayed 200 events, not necessarily every row in the database. **Clear log** asks for confirmation before permanently deleting **all** saved activity and resetting the count to 0. New events continue to appear normally. Other saved settings and guide data are unaffected.
 
 ## If something does not work
 
@@ -68,10 +76,10 @@ Shows connection changes, movie detection, guide retrieval, edited scenes, autom
 
 ## Requirements and installation
 
-1. For the **prebuilt EXE**, install mpv and optionally Syncplay; Python is not needed. To run from **source**, install Python 3.12 or newer and, in PowerShell in this project directory, run `py -3.12 -m venv .venv`, `.venv\Scripts\Activate.ps1`, and `python -m pip install -r requirements.txt`.
+1. For a **standalone EXE**, use a Windows build from [GitHub Releases](https://github.com/samaneh-mirzaei/safeplay-companion/releases) when one is published, or build it locally using the instructions below. Install mpv; Syncplay is optional. Python and the contents of `requirements.txt` are needed only to run or build from source. The EXE is a single file and needs no `_internal` folder.
 2. Create your own [DoesTheDogDie API key](https://www.doesthedogdie.com/api/3.0) and accept its [API terms](https://www.doesthedogdie.com/api/terms). Set `SAFEPLAY_DDD_API_KEY` in your environment, or paste the key into Settings for the current session. The key is never written to SQLite or source files. The provider uses `X-API-KEY`.
 3. Enable mpv IPC with `--input-ipc-server=\\.\pipe\safeplay-mpv`, or add `input-ipc-server=\\.\pipe\safeplay-mpv` to `mpv.conf`, then restart mpv. The path in Settings must match. Syncplay may override the config option; SafePlay searches for Syncplay's pipe or you can set the shared pipe in Syncplay Player Arguments.
-4. Run `SafePlayCompanion.exe`, or `python main.py` when using the source. SafePlay connects and reconnects automatically. It identifies a title and year from the file name, searches the guide, and asks you to choose if the match is ambiguous. You can correct the title and year in Dashboard.
+4. Run `SafePlayCompanion.exe` from the location where you saved it, or `python main.py` when using the source. SafePlay connects and reconnects automatically when **Connect to mpv automatically** is enabled. It identifies a title and year from the file name, searches the guide when an API key is available, and asks you to choose if the match is ambiguous. You can correct the title and year in Dashboard.
 5. Review the Scenes tab. Edit and confirm any community interval against the exact file before use. Confirm the movie edition on Dashboard, enable the desired categories, then enable automatic skipping in Settings. Automatic skipping starts OFF.
 
 The SQLite database and logs live at `%LOCALAPPDATA%\SafePlayCompanion\safeplay.db`. API guide cache expires after 29 days; manual edits remain when guide data refreshes. Close SafePlay to release the database. See [PRIVACY.md](PRIVACY.md) for local data handling and deletion. The API provider makes at most about 27 requests/minute and surfaces rate limit errors without automatic retry loops.
@@ -80,7 +88,7 @@ The SQLite database and logs live at `%LOCALAPPDATA%\SafePlayCompanion\safeplay.
 
 DoesTheDogDie v3 returns `position1/2/3` and `safePosition1/2/3` on some ratings. Its community intervals still require manual review before skipping. Verified `isSceneAlert` intervals can skip after movie-edition confirmation. CleanStream/VideoSkip and CringeMDb publish start/end intervals; SafePlay labels these `provided` and lets you select them after edition confirmation. These community intervals are not guaranteed accurate. CringeMDb's guide can indicate a reference release runtime; SafePlay blocks those intervals when the playing file differs by more than two minutes. Missing or invalid times never skip. Different cuts may still drift even with similar runtimes.
 
-Topic categories are mapped conservatively into four filters. Ambiguous or unrelated topic categories are ignored by the skipping engine. The exact phrase [Powered by DoesTheDogDie.com](https://www.doesthedogdie.com) appears wherever provider data is displayed, as required by the API terms. Free-tier API use is restricted to non-commercial use. See the linked terms for licensing, privacy, caching, and redistribution obligations before distributing an app that uses the API.
+Topic categories are mapped conservatively into four filters. Ambiguous or unrelated topic categories are ignored by the skipping engine. Guide data comes from [DoesTheDogDie.com](https://www.doesthedogdie.com); a visible provider link appears in SafePlay's footer on every tab. Check the [API terms](https://www.doesthedogdie.com/api/terms) for attribution, licensing, privacy, caching, and redistribution obligations before distributing an app that uses the API.
 
 ## Syncplay compatibility
 
@@ -90,10 +98,18 @@ Suggested live test: start two Syncplay clients in one room with the same test v
 
 ## Build and test
 
-Run `python -m pytest -q` for isolated engine, cache, provider normalization, and mock IPC tests. No real movie, API credential, mpv process, or Syncplay server is needed for tests. For a Windows distribution run `./build.ps1` with Python 3.12+. The standalone executable appears at `dist\SafePlayCompanion.exe` and can be copied by itself. The optional folder build (`build/SafePlay.spec`) requires its entire `dist\SafePlayCompanion` folder, including `_internal`; running that EXE alone causes missing Qt DLL errors. The icon in `assets` is a placeholder.
+To run from source with the commands below, install Python 3.12. Newer Python versions also meet `build.ps1`'s minimum-version check; use the matching `py -3.x` selector when creating their virtual environment. In PowerShell from the project root:
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe main.py
+```
+
+Run `.\.venv\Scripts\python.exe -m pytest -q` for engine, storage, provider, GUI, and IPC tests. These tests use mocks or local fixtures; no API key, movie, or Syncplay server is required. On Windows, `build.ps1` checks Python 3.12+, installs `requirements.txt`, runs tests, and builds the one-file app. With the virtual environment active, run `./build.ps1`; otherwise run `.\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean build/SafePlayOneFile.spec`. The standalone output is `dist\SafePlayCompanion.exe`. The optional folder spec `build/SafePlay.spec` produces `dist\SafePlayCompanion\` and requires its `_internal` folder. The icon in `assets` is a placeholder. There is no version tag or published release in this checkout.
 
 ## Limitations
 
-The app currently offers an English interface. An API key is needed for DoesTheDogDie searches. CleanStream is read from its public JSON catalog; CringeMDb intervals are read from its public movie guide pages. Source availability and coverage can change. The app does no video analysis. A live Syncplay seek has not been verified on this machine because the current Syncplay pipe denies access.
+The app currently offers an English interface. An API key is needed for DoesTheDogDie searches. CleanStream is read from its public JSON catalog; CringeMDb intervals are read from its public movie guide pages. Source availability and coverage can change. The app does no video analysis. Live Syncplay seeking and installation on a clean Windows machine have not been verified for this checkout.
 
 Official references: [DoesTheDogDie API v3](https://www.doesthedogdie.com/api/3.0), [API terms](https://www.doesthedogdie.com/api/terms), [mpv manual](https://mpv.io/manual/stable/), [Syncplay](https://github.com/Syncplay/syncplay).

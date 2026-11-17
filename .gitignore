@@ -12,3 +12,4 @@ dist/
 *.db-wal
 *.db-shm
 build/SafePlayOneFile/
+/design-check/
