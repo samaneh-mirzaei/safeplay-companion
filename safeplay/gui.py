@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import sqlite3
+from datetime import datetime
 import threading
 import time
 from uuid import uuid4
@@ -11,10 +13,14 @@ from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox,
     QFormLayout, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QListWidget, QMainWindow,
     QMessageBox, QPushButton, QSpinBox, QTabWidget, QTableWidget, QTableWidgetItem,
-    QTextEdit, QVBoxLayout, QWidget,
+    QTextEdit, QVBoxLayout, QWidget, QHeaderView, QAbstractItemView,
 )
 
+from .theme import STYLE, AdaptiveColumns, CueArtwork, CinemaIllustration, ticket_panel, label, panel, scroll
+from .controls import IntegerInput as QSpinBox, DecimalInput as QDoubleSpinBox, ChoiceInput as QComboBox
 from .engine import SkipEngine
+from .secondary import STYLE as SECONDARY_STYLE, SETTINGS_STYLE, SceneLabels, empty_state, activity_html
+from PySide6.QtGui import QFont
 from .models import CATEGORIES, Movie, Scene, identify_media, runtime_warning
 from .mpv import MpvClient, MpvError, syncplay_pipes
 from .provider import DoesTheDogDie, ProviderError, fallback_providers
@@ -210,7 +216,13 @@ class SceneDialog(QDialog):
     def __init__(self, scene: Scene, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Review scene interval")
+        self.setMinimumWidth(440)
         form = QFormLayout(self)
+        form.setContentsMargins(24, 24, 24, 24)
+        form.setSpacing(16)
+        form.setRowWrapPolicy(QFormLayout.WrapAllRows)
+        form.addRow(label("Review the interval", "pageTitle"))
+        form.addRow(label("Use seconds from the exact file you’re watching"))
         self.start = QDoubleSpinBox(); self.start.setRange(0, 100000); self.start.setDecimals(1)
         self.end = QDoubleSpinBox(); self.end.setRange(0, 100000); self.end.setDecimals(1)
         self.start.setValue(scene.start or 0); self.end.setValue(scene.end or 0)
@@ -254,23 +266,32 @@ class MainWindow(QMainWindow):
         self.confirmed = False
         self.suspended = False
         self.setWindowTitle("SafePlay Companion")
-        self.resize(1080, 740)
-        self.setStyleSheet("""
-            QWidget { background:#151b24; color:#e9edf3; font-size:13px; }
-            QPushButton { background:#3366d6; border:0; border-radius:6px; padding:8px 12px; }
-            QPushButton:hover { background:#4a7df0; }
-            QLineEdit,QDoubleSpinBox,QSpinBox,QComboBox,QTableWidget,QTextEdit,QListWidget {
-                background:#202a37; border:1px solid #37475c; border-radius:5px; padding:4px; }
-            QTabWidget::pane { border:1px solid #37475c; }
-            QTabBar::tab { background:#202a37; padding:10px 18px; }
-            QTabBar::tab:selected { background:#3366d6; }
-            QLabel#heading { font-size:22px; font-weight:bold; }
-        """)
-        tabs = QTabWidget(); self.setCentralWidget(tabs)
-        tabs.addTab(self._dashboard(), "Dashboard")
-        tabs.addTab(self._scene_page(), "Scenes")
-        tabs.addTab(self._settings_page(), "Settings")
-        tabs.addTab(self._log_page(), "Activity")
+        self.resize(1180, 800)
+        self.setMinimumSize(560, 480)
+        self.setStyleSheet(STYLE)
+        shell = QWidget(); shell.setObjectName("shell")
+        shell_layout = QVBoxLayout(shell)
+        shell_layout.setContentsMargins(20, 12, 20, 12)
+        shell_layout.setSpacing(8)
+        masthead = QHBoxLayout()
+        masthead.addWidget(label("SafePlay", "brand"))
+        masthead.addWidget(label("Companion / mpv + Syncplay\nYour viewing. Your boundaries.", "subtitle"))
+        self.attribution = QLabel('<a href="https://www.doesthedogdie.com" style="color:#20201e;text-decoration:none">Powered by DoesTheDogDie.com</a>')
+        self.attribution.setObjectName("providerAttribution")
+        self.attribution.setOpenExternalLinks(True)
+        self.attribution.setTextInteractionFlags(Qt.TextBrowserInteraction)
+        self.attribution.setFocusPolicy(Qt.StrongFocus)
+        self.attribution.setAccessibleName("Powered by DoesTheDogDie.com, opens website")
+        shell_layout.addLayout(masthead)
+        self.tabs = QTabWidget()
+        self.tabs.setDocumentMode(True)
+        shell_layout.addWidget(self.tabs)
+        shell_layout.addWidget(self.attribution, 0, Qt.AlignRight)
+        self.setCentralWidget(shell)
+        self.tabs.addTab(scroll(self._dashboard()), "Dashboard")
+        self.tabs.addTab(self._scene_page(), "Scenes")
+        self.tabs.addTab(scroll(self._settings_page()), "Settings")
+        self.tabs.addTab(self._log_page(), "Activity")
         self.worker = MpvWorker(self.pipe.text())
         self.worker.snapshot.connect(self._snapshot)
         self.worker.status.connect(self._status)
@@ -280,116 +301,274 @@ class MainWindow(QMainWindow):
         self.worker.start()
         self._refresh_log()
 
+    def _page(self, title, description):
+        page = QWidget(); page.setObjectName("page")
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(4, 24, 8, 12)
+        layout.setSpacing(20)
+        title_row = QHBoxLayout(); title_row.setSpacing(16)
+        title_row.addWidget(label(title, "pageTitle"), 1)
+        variant = {"Set the scene": 0, "The cut list": 1,
+                   "Make the connection": 2, "Playback journal": 3}.get(title, 0)
+        title_row.addWidget(CueArtwork(variant))
+        layout.addLayout(title_row)
+        layout.addWidget(label(description))
+        return page, layout
+
     def _dashboard(self):
-        page = QWidget(); layout = QVBoxLayout(page)
-        heading = QLabel("SafePlay Companion"); heading.setObjectName("heading")
-        layout.addWidget(heading)
-        self.status_label = QLabel("Connecting to mpv…")
-        self.movie_label = QLabel("Movie: —")
-        self.position_label = QLabel("Playback: —")
-        self.guide_label = QLabel("Guide: not loaded")
-        self.skip_label = QLabel("Automatic skipping: OFF")
-        for label in (self.status_label, self.movie_label, self.position_label, self.guide_label, self.skip_label):
-            label.setTextFormat(Qt.PlainText)
-            layout.addWidget(label)
-        row = QHBoxLayout()
+        page = QWidget(); page.setObjectName("dashboard")
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(4, 8, 8, 8); layout.setSpacing(8)
+        intro = QHBoxLayout(); intro.setSpacing(24)
+        intro.addWidget(label("Your movie. Your rules.", "pageTitle"), 1)
+        intro.addWidget(label("Find a guide, choose filters, confirm your edition."))
+        layout.addLayout(intro)
+        playback, playback_layout = ticket_panel("Now playing", "01", "playbackPanel")
+        self.movie_label = label("No media loaded", "movie")
+        self.position_label = label("Playback: —", "timecode")
+        self.status_label = label("Connecting to mpv…")
+        self.guide_label = label("Guide: not loaded")
+        self.skip_label = label("Automatic skipping: OFF", "skipState")
+        readout = QWidget(); readout_layout = QVBoxLayout(readout)
+        readout_layout.setContentsMargins(0, 0, 0, 0); readout_layout.setSpacing(4)
+        for item in (self.movie_label, self.position_label, self.status_label, self.guide_label):
+            readout_layout.addWidget(item)
+        picture = CinemaIllustration()
+        playback_row = QHBoxLayout(); playback_row.setSpacing(24)
+        playback_row.addWidget(readout, 1); playback_row.addWidget(picture)
+        playback_layout.addLayout(playback_row)
+        playback_layout.addWidget(self.skip_label)
+        layout.addWidget(playback)
+
+        guide, guide_layout = ticket_panel("Find your guide", "02", "guidePanel", "guide")
         self.title = QLineEdit(); self.title.setPlaceholderText("Movie or series title")
+        self.title.setAccessibleName("Movie or series title")
+        self.title.returnPressed.connect(self._search)
+        guide_layout.addWidget(self.title)
+        row = QHBoxLayout(); row.setSpacing(12)
         self.year = QSpinBox(); self.year.setRange(0, 2100); self.year.setSpecialValueText("Year unknown")
-        self.search = QPushButton("Find guide")
+        self.year.setAccessibleName("Release year")
+        self.search = QPushButton("Find guide"); self.search.setProperty("primary", True)
         self.search.clicked.connect(self._search)
-        row.addWidget(self.title); row.addWidget(self.year); row.addWidget(self.search)
-        layout.addLayout(row)
-        episode_row = QHBoxLayout()
+        row.addWidget(self.year); row.addWidget(self.search)
+        guide_layout.addLayout(row)
+        episode_row = QHBoxLayout(); episode_row.setSpacing(8)
         self.media_type = QComboBox()
-        self.media_type.addItem("Movie", "movie")
-        self.media_type.addItem("TV show", "tv show")
+        self.media_type.addItem("Movie", "movie"); self.media_type.addItem("TV show", "tv show")
+        self.media_type.setAccessibleName("Media type")
         self.season = QSpinBox(); self.season.setRange(1, 100); self.season.setPrefix("Season ")
         self.episode = QSpinBox(); self.episode.setRange(1, 1000); self.episode.setPrefix("Episode ")
+        self.season.setAccessibleName("Season"); self.episode.setAccessibleName("Episode")
         self.media_type.currentIndexChanged.connect(self._kind_changed)
         self.season.valueChanged.connect(self._selection_changed)
         self.episode.valueChanged.connect(self._selection_changed)
-        episode_row.addWidget(self.media_type); episode_row.addWidget(self.season); episode_row.addWidget(self.episode)
-        layout.addLayout(episode_row)
+        for item in (self.media_type, self.season, self.episode): episode_row.addWidget(item)
+        guide_layout.addLayout(episode_row)
+        guide_layout.addWidget(label("TV shows: select a season and episode"))
         self.confirm = QPushButton("Review and confirm movie edition")
+        self.confirm.setObjectName("confirmEdition")
         self.confirm.clicked.connect(self._confirm_edition)
-        layout.addWidget(self.confirm)
+        guide_layout.addWidget(self.confirm)
+        guide_layout.addWidget(label("Confirm this file’s edition before skipping"))
+        guide_layout.addStretch()
         self._kind_changed()
+
+        filters, filter_layout = ticket_panel("Content filters", "03", "filtersPanel", "filters")
         self.all_filters = QCheckBox("Enable all content filters")
         self.all_filters.stateChanged.connect(self._toggle_all)
-        layout.addWidget(self.all_filters)
+        filter_layout.addWidget(self.all_filters)
         self.filter_boxes = {}
-        for key, label in CATEGORIES.items():
-            box = QCheckBox(label); box.setChecked(self.store.preference("filter_" + key, False))
+        for key, title in CATEGORIES.items():
+            box = QCheckBox(title.replace("&", "&&")); box.setChecked(self.store.preference("filter_" + key, False))
+            box.setProperty("filterRow", True); box.setProperty("category", key)
             box.toggled.connect(lambda value, k=key: self._filter_changed(k, value))
-            layout.addWidget(box); self.filter_boxes[key] = box
+            filter_layout.addWidget(box); self.filter_boxes[key] = box
         self.all_filters.blockSignals(True)
         self.all_filters.setChecked(all(b.isChecked() for b in self.filter_boxes.values()))
         self.all_filters.blockSignals(False)
-        self.attribution = QLabel('<a href="https://www.doesthedogdie.com">Powered by DoesTheDogDie.com</a>')
-        self.attribution.setOpenExternalLinks(True)
-        layout.addStretch(); layout.addWidget(self.attribution)
+        filter_layout.addWidget(label("Choose scenes in Scenes. Enable skipping in Settings."))
+        filter_layout.addStretch()
+        layout.addWidget(AdaptiveColumns(guide, filters))
         return page
 
     def _scene_page(self):
-        page = QWidget(); layout = QVBoxLayout(page)
+        page, layout = self._page("The cut list", "Review scene times and choose what to skip")
+        page.setObjectName("secondary"); page.setStyleSheet(SECONDARY_STYLE)
+        layout.setContentsMargins(4, 8, 8, 8); layout.setSpacing(12)
+        sheet, sheet_layout = ticket_panel("Scene intervals", "01", "secondaryPanel")
         self.scene_table = QTableWidget(0, 8)
+        self.scene_table.setItemDelegate(SceneLabels(self.scene_table))
         self.scene_table.setHorizontalHeaderLabels(["Start", "End", "Category", "Source", "Reliability", "Skip this scene", "Ready now?", "Topic"])
         self.scene_table.horizontalHeader().setStretchLastSection(True)
+        self.scene_table.horizontalHeader().setMinimumSectionSize(88)
+        for i, width in enumerate((88, 88, 184, 160, 104, 116, 96, 220)):
+            self.scene_table.setColumnWidth(i, width)
+        self.scene_table.verticalHeader().setVisible(False)
+        self.scene_table.verticalHeader().setDefaultSectionSize(48)
+        self.scene_table.setAlternatingRowColors(True)
+        self.scene_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.scene_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.scene_table.setAccessibleName("Scene intervals")
         self.scene_table.itemChanged.connect(self._scene_check_changed)
-        layout.addWidget(self.scene_table)
-        row = QHBoxLayout()
-        edit = QPushButton("Edit selected scene"); edit.clicked.connect(self._edit_scene)
+        self.scene_empty_panel, self.scene_empty = empty_state("Your cut list starts here", "Find a movie or episode on Dashboard to see its scene intervals")
+        sheet_layout.addWidget(self.scene_empty_panel)
+        sheet_layout.addWidget(self.scene_table, 1)
+        layout.addWidget(sheet, 1)
+        row = QHBoxLayout(); row.setSpacing(12)
+        edit = QPushButton("Edit selected scene"); edit.setProperty("primary", True); edit.clicked.connect(self._edit_scene)
         add = QPushButton("Add manual scene"); add.clicked.connect(self._add_scene)
-        row.addWidget(edit); row.addWidget(add); layout.addLayout(row)
-        self.scene_info = QLabel("No guide loaded.")
+        row.addWidget(edit); row.addWidget(add); row.addStretch(); layout.addLayout(row)
+        self.scene_info = label("No guide loaded")
         layout.addWidget(self.scene_info)
-        note = QLabel("Missing times must be entered and checked against your movie file before a scene can skip.")
-        layout.addWidget(note)
-        attr = QLabel('<a href="https://www.doesthedogdie.com">Powered by DoesTheDogDie.com</a>')
-        attr.setOpenExternalLinks(True); layout.addWidget(attr)
+        layout.addWidget(label("Missing times cannot skip. Verify intervals against your file."))
         return page
 
     def _settings_page(self):
-        page = QWidget(); form = QFormLayout(page)
+        page = QWidget(); page.setObjectName("settings")
+        page.setStyleSheet(SETTINGS_STYLE)
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(4, 8, 8, 8); layout.setSpacing(12)
+        intro = QHBoxLayout(); intro.setSpacing(24)
+        intro.addWidget(label("Make the connection", "pageTitle"), 1)
+        intro.addWidget(label("Configure mpv, your guide source,\nand automatic skipping"))
+        layout.addLayout(intro)
+        connection, connection_layout = ticket_panel("Player & guide", "01", "settingsConnection", "guide")
+        form = QFormLayout(); form.setSpacing(8)
+        form.setRowWrapPolicy(QFormLayout.WrapAllRows)
         self.pipe = QLineEdit(self.store.preference("pipe", r"\\.\pipe\safeplay-mpv"))
         self.api_key = QLineEdit(os.environ.get("SAFEPLAY_DDD_API_KEY", ""))
         self.api_key.setEchoMode(QLineEdit.Password)
-        self.auto_connect = QCheckBox(); self.auto_connect.setChecked(self.store.preference("auto_connect", True))
-        self.auto_skip = QCheckBox(); self.auto_skip.setChecked(self.store.preference("auto_skip", False))
+        self.auto_connect = QCheckBox("Connect to mpv automatically"); self.auto_connect.setChecked(self.store.preference("auto_connect", True))
+        self.auto_skip = QCheckBox("Enable automatic skipping"); self.auto_skip.setChecked(self.store.preference("auto_skip", False))
         self.margin = QDoubleSpinBox(); self.margin.setRange(0, 5); self.margin.setSingleStep(.1)
-        self.margin.setValue(self.store.preference("margin", .5))
+        self.margin.setValue(self.store.preference("margin", .5)); self.margin.setSuffix(" seconds")
         self.language = QComboBox(); self.language.addItem("English", "en")
         self.startup = QComboBox(); self.startup.addItems(["Normal window", "Minimized"])
-        self.startup.setCurrentIndex(self.store.preference("startup", 0))
+        startup = self.store.preference("startup", 0)
+        self.startup.setCurrentIndex(startup if type(startup) is int and startup in (0, 1) else 0)
+        self._saved_startup = self.startup.currentIndex()
+        self.startup.setToolTip("Applies immediately and is saved for future launches")
+        self.startup.activated.connect(self._window_mode_changed)
         form.addRow("mpv IPC pipe", self.pipe)
         form.addRow("DoesTheDogDie API key (session only)", self.api_key)
-        form.addRow("Connect automatically", self.auto_connect)
-        form.addRow("Automatic skipping", self.auto_skip)
-        form.addRow("Safety margin (seconds)", self.margin)
-        form.addRow("Language", self.language)
-        form.addRow("Startup window", self.startup)
-        save = QPushButton("Save settings"); save.clicked.connect(self._apply_settings)
-        form.addRow(save)
-        note = QLabel("API key stays in memory only. For repeated use set SAFEPLAY_DDD_API_KEY.")
-        form.addRow(note)
+        form.addRow(self.auto_connect)
+        connection_layout.addLayout(form)
+        connection_layout.addWidget(label("Match your mpv IPC pipe. Syncplay pipes are detected automatically."))
+        connection_layout.addWidget(label("Session only. Set SAFEPLAY_DDD_API_KEY to reuse your key."))
+        preferences, preferences_layout = ticket_panel("Playback preferences", "02", "settingsBehavior", "filters")
+        behavior = QFormLayout(); behavior.setSpacing(8); behavior.setRowWrapPolicy(QFormLayout.WrapAllRows)
+        behavior.addRow(self.auto_skip)
+        behavior.addRow("Safety margin", self.margin)
+        behavior.addRow("Language", self.language)
+        behavior.addRow("SafePlay window mode", self.startup)
+        preferences_layout.addLayout(behavior)
+        preferences_layout.addWidget(label("Requires selected filters, valid times, and a confirmed edition."))
+        layout.addWidget(AdaptiveColumns(connection, preferences))
+        save = QPushButton("Save settings"); save.setProperty("primary", True)
+        save.clicked.connect(self._save_settings)
+        self.saved_label = label("Save to apply changes")
+        footer = QHBoxLayout(); footer.setSpacing(16)
+        footer.addWidget(save); footer.addWidget(self.saved_label, 1)
+        layout.addLayout(footer)
+        layout.addStretch()
         return page
 
+    def _save_settings(self):
+        self._apply_settings()
+        if self.pipe.text().strip().startswith("\\\\.\\pipe\\"):
+            self.saved_label.setText("Settings saved")
+
+    def _window_mode_changed(self, index):
+        """A user selection applies now, independently of other unsaved settings."""
+        try:
+            self.store.set_preference("startup", index)
+        except sqlite3.Error:
+            self.startup.setCurrentIndex(self._saved_startup)
+            self.saved_label.setText("Couldn’t save window mode. Try again.")
+            return
+        self._saved_startup = index
+        self.saved_label.setText("Window mode saved · Applies now and at startup")
+        # Let the native dropdown close before changing the top-level window state.
+        QTimer.singleShot(0, self.show_startup_window)
+
     def _log_page(self):
-        page = QWidget(); layout = QVBoxLayout(page)
+        page, layout = self._page("Playback journal", "Connection changes, guide lookups, and every automatic skip")
+        page.setObjectName("secondary"); page.setStyleSheet(SECONDARY_STYLE)
+        layout.setContentsMargins(4, 8, 8, 8); layout.setSpacing(12)
+        journal, journal_layout = ticket_panel("Recent events", "01", "secondaryPanel")
+        self.activity_empty, _ = empty_state("No activity yet", "New playback and connection events will appear here")
+        journal_layout.addWidget(self.activity_empty)
         self.log_box = QTextEdit(); self.log_box.setReadOnly(True)
-        layout.addWidget(self.log_box)
-        refresh = QPushButton("Refresh log"); refresh.clicked.connect(self._refresh_log)
-        layout.addWidget(refresh)
-        attr = QLabel('<a href="https://www.doesthedogdie.com">Powered by DoesTheDogDie.com</a>')
-        attr.setOpenExternalLinks(True); layout.addWidget(attr)
+        self.log_box.setAccessibleName("Playback activity log")
+        journal_layout.addWidget(self.log_box, 1)
+        layout.addWidget(journal, 1)
+        self.refresh_button = QPushButton("Refresh log")
+        self.refresh_button.clicked.connect(self._request_refresh)
+        self.clear_button = QPushButton("Clear log")
+        self.clear_button.setProperty("destructive", True)
+        self.clear_button.clicked.connect(self._clear_log)
+        self.refresh_status = label("Latest 200 events · Stored on this computer")
+        self._activity_events = None
+        refresh_row = QHBoxLayout(); refresh_row.setSpacing(16)
+        refresh_row.addWidget(self.refresh_button)
+        refresh_row.addWidget(self.clear_button)
+        refresh_row.addWidget(self.refresh_status, 1)
+        layout.addLayout(refresh_row)
         return page
 
     def _log(self, kind, message):
         self.store.log(kind, message)
         self._refresh_log()
 
+    def _request_refresh(self):
+        self.refresh_button.setEnabled(False)
+        self.refresh_status.setText("Refreshing…")
+        QTimer.singleShot(0, self._refresh_log)
+
+    def _confirm_clear_log(self):
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Warning)
+        dialog.setWindowTitle("Clear activity log?")
+        dialog.setText("Clear activity log?")
+        dialog.setInformativeText("This will permanently delete all recorded activity events. This action cannot be undone.")
+        dialog.addButton("Cancel", QMessageBox.RejectRole)
+        clear = dialog.addButton("Clear log", QMessageBox.DestructiveRole)
+        dialog.setDefaultButton(dialog.buttons()[0])
+        dialog.exec()
+        return dialog.clickedButton() is clear
+
+    def _clear_log(self):
+        if not self._confirm_clear_log():
+            return
+        self.clear_button.setEnabled(False)
+        try:
+            self.store.clear_activity()
+        except sqlite3.Error as exc:
+            self.refresh_status.setText("Couldn’t clear activity. Try again.")
+            self.refresh_status.setToolTip(str(exc))
+        else:
+            self._activity_events = []
+            self.log_box.clear()
+            self.activity_empty.setVisible(True)
+            self.refresh_status.setText("Log cleared · 0 events")
+            self.refresh_status.setToolTip("")
+        finally:
+            self.clear_button.setEnabled(True)
+
     def _refresh_log(self):
-        self.log_box.setPlainText("\n".join(f"{at}  [{kind}] {detail}" for at, kind, detail in self.store.recent()))
+        try:
+            events = self.store.recent()
+            self.activity_empty.setVisible(not events)
+            self.log_box.setHtml(activity_html(events))
+            self._activity_events = events
+            self.refresh_status.setText(f"Updated {datetime.now():%H:%M:%S} · {len(events)} events · Newest first")
+        except sqlite3.Error as exc:
+            self.refresh_status.setText("Couldn’t refresh activity. Try again.")
+            self.refresh_status.setToolTip(str(exc))
+        else:
+            self.refresh_status.setToolTip("")
+        finally:
+            self.refresh_button.setEnabled(True)
 
     def _status(self, status):
         self.status_label.setText("mpv: " + status)
@@ -591,7 +770,10 @@ class MainWindow(QMainWindow):
             self._apply_settings()
 
     def _render_scenes(self):
+        selected_row = self.scene_table.currentRow()
         scenes = self.movie.scenes if self.movie else []
+        self.scene_empty_panel.setVisible(not scenes)
+        self.scene_empty.setText("No scenes submitted for this guide\nTry another episode or add a reviewed interval" if self.movie else "No guide loaded\nFind a movie or episode on Dashboard to see its scene intervals")
         if self.movie:
             timed = sum(s.valid(self.duration) for s in scenes)
             state = "edition confirmed" if self.confirmed else "edition confirmation required"
@@ -606,6 +788,9 @@ class MainWindow(QMainWindow):
                       "", "Yes" if skip else "No", s.topic or s.note]
             for j, value in enumerate(values):
                 item = QTableWidgetItem(value)
+                item.setToolTip(value)
+                if j in (0, 1):
+                    item.setFont(QFont("Consolas", 10))
                 if j == 5:
                     item.setFlags((item.flags() | Qt.ItemIsUserCheckable) & ~Qt.ItemIsEditable)
                     item.setCheckState(Qt.Checked if s.enabled else Qt.Unchecked)
@@ -613,8 +798,10 @@ class MainWindow(QMainWindow):
                     item.setFlags(item.flags() & ~Qt.ItemIsEditable)
                 self.scene_table.setItem(i, j, item)
         self.scene_table.blockSignals(False)
+        if 0 <= selected_row < len(scenes):
+            self.scene_table.selectRow(selected_row)
         missing = sum(s.start is None or s.end is None for s in scenes)
-        self.scene_info.setText(f"{len(scenes)} scenes; {missing} missing start or end times. Check 'Skip this scene' to choose individual scenes; edit missing times before they can skip.")
+        self.scene_info.setText(f"{len(scenes)} scenes · {missing} missing times")
 
     def _selected_scene(self):
         row = self.scene_table.currentRow()
@@ -713,6 +900,12 @@ class MainWindow(QMainWindow):
     def _skipped(self, target, keys):
         self._log("skip", f"Sought to {clock(target)} for {', '.join(keys)}")
 
+    def show_startup_window(self):
+        if self.startup.currentIndex() == 1:
+            self.showMinimized()
+        else:
+            self.showNormal()
+
     def closeEvent(self, event):
         self.worker.active = False
         self.worker.wait(5000)
@@ -724,10 +917,8 @@ class MainWindow(QMainWindow):
 
 def launch():
     app = QApplication([])
+    app.setStyle("Fusion")
     home = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "SafePlayCompanion"
     window = MainWindow(home / "safeplay.db")
-    if window.startup.currentIndex() == 1:
-        window.showMinimized()
-    else:
-        window.show()
+    window.show_startup_window()
     return app.exec()

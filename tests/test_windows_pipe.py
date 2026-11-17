@@ -11,7 +11,7 @@ from safeplay.mpv import MpvClient
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows named pipes only")
 def test_windows_named_pipe_roundtrip():
-    kernel = ctypes.windll.kernel32
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel.CreateNamedPipeW.argtypes = [ctypes.c_wchar_p, ctypes.c_uint32, ctypes.c_uint32,
                                         ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32,
                                         ctypes.c_uint32, ctypes.c_void_p]
@@ -22,6 +22,7 @@ def test_windows_named_pipe_roundtrip():
     kernel.WriteFile.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint32,
                                  ctypes.POINTER(ctypes.c_uint32), ctypes.c_void_p]
     kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+    kernel.FlushFileBuffers.argtypes = [ctypes.c_void_p]
     endpoint = rf"\\.\pipe\safeplay-test-{os.getpid()}"
     ready = threading.Event()
     errors = []
@@ -34,7 +35,8 @@ def test_windows_named_pipe_roundtrip():
             return
         try:
             ready.set()
-            if not kernel.ConnectNamedPipe(handle, None):
+            # A client can connect between CreateNamedPipe and ConnectNamedPipe.
+            if not kernel.ConnectNamedPipe(handle, None) and ctypes.get_last_error() != 535:
                 errors.append("ConnectNamedPipe failed")
                 return
             buffer = ctypes.create_string_buffer(4096)
@@ -49,6 +51,9 @@ def test_windows_named_pipe_roundtrip():
             if not kernel.WriteFile(handle, ctypes.c_char_p(response), len(response),
                                     ctypes.byref(written), None):
                 errors.append("WriteFile failed")
+            else:
+                # Do not close the mock server before the client consumes its reply.
+                kernel.FlushFileBuffers(handle)
         finally:
             kernel.CloseHandle(handle)
 

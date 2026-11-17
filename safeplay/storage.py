@@ -57,6 +57,10 @@ class Store:
         return [tuple(r) for r in self.db.execute(
             "SELECT at,kind,detail FROM activity ORDER BY id DESC LIMIT ?", (limit,))]
 
+    def clear_activity(self):
+        with self.db:
+            self.db.execute("DELETE FROM activity")
+
     def save_guide(self, movie: Movie):
         if not movie.external_id:
             raise ValueError("Guide requires an external ID")
